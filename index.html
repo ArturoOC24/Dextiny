@@ -351,6 +351,8 @@
     const hash = hashString(buildInput());
     const dexId = (hash % DEX_MAX) + 1;
     youResult = { id: dexId, hash };
+    // input may have changed — let browse tabs recompute (keep their dropdown choice)
+    ["generation", "region", "game"].forEach(k => delete lastResult[k]);
     setTabVisual("you");
     await showPokemon(dexId, hash);
   }
@@ -476,7 +478,9 @@
 
   const ROMAN = ["I","II","III","IV","V","VI","VII","VIII","IX","X"];
   let browseType = "generation";
-  let youResult = null;   // last "By You" reveal { id, hash }
+  let youResult = null;                    // last "Your Match" reveal { id, hash }
+  const browseValueMemory = {};            // browseType -> last selected pool value
+  const lastResult = {};                   // browseType -> last shown { id, hash }
   const listCache = {};   // type -> [{value, label}]
   const poolCache = {};   // "type:value" -> [ids]
 
@@ -554,6 +558,7 @@
     try {
       const opts = await loadOptions(browseType);
       sel.innerHTML = opts.map(o => '<option value="' + o.value + '">' + o.label + '</option>').join("");
+      if (browseValueMemory[browseType]) sel.value = browseValueMemory[browseType];
     } catch (e) {
       sel.innerHTML = '<option value="">Couldn\'t load list</option>';
     }
@@ -580,14 +585,16 @@
       }
     } else {
       browseType = t;
-      await populateBrowseValues();
-      await revealFromPool(true);
+      await populateBrowseValues();      // restores the remembered dropdown value
+      if (lastResult[t]) await showPokemon(lastResult[t].id, lastResult[t].hash);
+      else await revealFromPool(true);
     }
   }
 
   async function revealFromPool(useHash) {
     const value = document.getElementById("browseValue").value;
     if (!value) { toast("Pick an option first"); return; }
+    browseValueMemory[browseType] = value;    // remember this tab's selection
     resultEl.className = "result show";
     resultEl.innerHTML = '<div class="msg">Building the pool…</div>';
     try {
@@ -601,6 +608,7 @@
         idx = Math.floor(Math.random() * pool.length);
         hash = hashString("pool:" + browseType + ":" + value + ":" + idx);
       }
+      lastResult[browseType] = { id: pool[idx], hash };
       await showPokemon(pool[idx], hash);
     } catch (e) {
       resultEl.innerHTML = '<div class="msg">Could not build that pool (' + e.message + ').</div>';
