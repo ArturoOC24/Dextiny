@@ -250,14 +250,13 @@
     </div>
     <div class="actions">
       <button class="go" id="go">Reveal my Pokémon</button>
-      <button class="rand" id="rand" title="Random">🎲</button>
     </div>
   </div>
 
   <!-- Result: tabs let you re-slice the reveal by pool -->
   <div class="result-card" id="resultCard">
     <div class="tabs" id="tabs">
-      <button data-tab="you" class="active">By You</button>
+      <button data-tab="you" class="active">Your Match</button>
       <button data-tab="generation">By Gen</button>
       <button data-tab="region">By Region</button>
       <button data-tab="game">By Game</button>
@@ -265,7 +264,7 @@
 
     <div class="subselect" id="subselect" style="display:none">
       <select id="browseValue"><option>Loading…</option></select>
-      <button class="rand" id="browseRand" title="Random from this pool">🎲</button>
+      <button class="rand" id="browseRand" title="Random pool">🎲</button>
     </div>
 
     <div class="result" id="result"></div>
@@ -473,15 +472,6 @@
     if (inputValid()) reveal();
   }
 
-  // Random Pokémon (not from a hash) — shown under the "By You" tab
-  function randomPokemon() {
-    const id = Math.floor(Math.random() * DEX_MAX) + 1;
-    const hash = hashString("random:" + id);
-    youResult = { id, hash };
-    setTabVisual("you");
-    showPokemon(id, hash);
-  }
-
   /* ---------- Explore by generation / region / game ---------- */
 
   const ROMAN = ["I","II","III","IV","V","VI","VII","VIII","IX","X"];
@@ -619,11 +609,19 @@
     const btn = e.target.closest("button");
     if (btn) setTab(btn.dataset.tab);
   });
+  // Roll a random option in the pool picker, then reveal from it
+  function randomizeSubselection() {
+    const sel = document.getElementById("browseValue");
+    const opts = [...sel.options].filter(o => o.value);
+    if (!opts.length) return;
+    sel.value = opts[Math.floor(Math.random() * opts.length)].value;
+    revealFromPool(true);
+  }
+
   document.getElementById("browseValue").addEventListener("change", () => revealFromPool(true));
-  document.getElementById("browseRand").addEventListener("click", () => revealFromPool(false));
+  document.getElementById("browseRand").addEventListener("click", randomizeSubselection);
 
   document.getElementById("go").addEventListener("click", reveal);
-  document.getElementById("rand").addEventListener("click", randomPokemon);
   document.querySelectorAll("input[type=text], input[type=date]").forEach(inp => {
     inp.addEventListener("keydown", e => { if (e.key === "Enter") reveal(); });
   });
