@@ -501,7 +501,9 @@
       opts = d.results.map((g, i) => ({ value: g.name, label: "Generation " + (ROMAN[i] || (i + 1)) }));
     } else if (type === "region") {
       const d = await getJson("https://pokeapi.co/api/v2/region?limit=100");
-      opts = d.results.map(r => ({ value: r.name, label: titleCase(r.name) }));
+      opts = d.results
+        .filter(r => r.name !== "orre")
+        .map(r => ({ value: r.name, label: titleCase(r.name) }));
     } else { // game
       const d = await getJson("https://pokeapi.co/api/v2/version-group?limit=100");
       opts = d.results.map(v => ({ value: v.name, label: titleCase(v.name) }));
