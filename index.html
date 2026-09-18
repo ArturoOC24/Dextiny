@@ -278,7 +278,9 @@
   </footer>
 
 <script>
-  const DEX_MAX = 1025;
+  // National Dex size. Starts as a fallback and is refreshed from the API on load,
+  // so newly released Pokémon are included automatically without a code change.
+  let DEX_MAX = 1025;
 
   const TYPE_COLORS = {
     normal:"#A8A77A", fire:"#EE8130", water:"#6390F0", electric:"#F7D02C",
@@ -636,9 +638,17 @@
     inp.addEventListener("keydown", e => { if (e.key === "Enter") reveal(); });
   });
 
-  // Initial placeholder in the result card
-  setTab("you");
-  loadFromUrl();
+  // Refresh the Dex size from the API (adds future Pokémon automatically),
+  // then show the initial state.
+  async function init() {
+    try {
+      const d = await getJson("https://pokeapi.co/api/v2/pokemon-species?limit=1");
+      if (d && d.count) DEX_MAX = d.count;
+    } catch (_) { /* offline or API down — keep the fallback */ }
+    setTab("you");
+    loadFromUrl();
+  }
+  init();
 </script>
 </body>
 </html>
