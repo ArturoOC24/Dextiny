@@ -71,6 +71,18 @@
   }
   input:focus { border-color: var(--accent-2); }
 
+  .tabs {
+    display: flex; gap: 4px; margin-bottom: 18px; padding: 4px;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 12px;
+  }
+  .tabs button {
+    flex: 1; min-width: 0; padding: 9px 6px; border: none; background: transparent;
+    color: var(--muted); font-size: 13px; font-weight: 700; cursor: pointer;
+    border-radius: 8px; transition: all .15s; white-space: nowrap;
+  }
+  .tabs button:hover { color: var(--text); }
+  .tabs button.active { background: var(--accent); color: #fff; }
+
   .mode { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
   .mode button {
     flex: 1;
@@ -119,14 +131,35 @@
   }
   .rand:hover { border-color: var(--accent-2); }
 
+  .divider {
+    width: 100%; max-width: 460px; margin: 20px 0 2px; text-align: center;
+    position: relative; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 1px;
+  }
+  .divider::before {
+    content: ""; position: absolute; top: 50%; left: 0; right: 0; height: 1px; background: var(--border);
+  }
+  .divider span { position: relative; background: var(--bg); padding: 0 12px; }
+
+  select {
+    width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--border);
+    background: var(--card); color: var(--text); font-size: 15px; outline: none; cursor: pointer;
+    transition: border-color .15s;
+  }
+  select:focus { border-color: var(--accent-2); }
+  .browse-hint { font-size: 12px; color: var(--muted); margin: 0 0 16px; line-height: 1.5; }
+
+  .result-card {
+    width: 100%; max-width: 460px; margin-top: 22px;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 16px; box-shadow: var(--shadow); padding: 16px;
+  }
+  .subselect { display: flex; gap: 8px; margin-bottom: 14px; }
+  .subselect select { flex: 1; }
+  .subselect .rand { padding: 0 16px; }
   .result {
     width: 100%;
-    max-width: 460px;
-    margin-top: 22px;
-    background: var(--card);
     border: 1px solid var(--border);
-    border-radius: 16px;
-    box-shadow: var(--shadow);
+    border-radius: 14px;
     overflow: hidden;
     display: none;
   }
@@ -200,13 +233,13 @@
     <p>Discover the Pokémon written in your name and birthday.</p>
   </header>
 
+  <!-- Input form -->
   <div class="panel">
     <div class="mode" id="mode">
       <button data-mode="name" class="active">Name</button>
       <button data-mode="bday">Birthday</button>
       <button data-mode="both">Name + Birthday</button>
     </div>
-
     <div class="field" id="field-name">
       <label for="name">Name</label>
       <input id="name" type="text" placeholder="e.g. Ash Ketchum" autocomplete="off" />
@@ -215,14 +248,28 @@
       <label for="bday">Birthday</label>
       <input id="bday" type="date" />
     </div>
-
     <div class="actions">
       <button class="go" id="go">Reveal my Pokémon</button>
-      <button class="rand" id="rand" title="Random">🎲</button>
     </div>
   </div>
 
-  <div class="result" id="result"></div>
+  <!-- Result: tabs let you re-slice the reveal by pool -->
+  <div class="result-card" id="resultCard">
+    <div class="tabs" id="tabs">
+      <button data-tab="you" class="active">Your Match</button>
+      <button data-tab="generation">By Gen</button>
+      <button data-tab="region">By Region</button>
+      <button data-tab="game">By Game</button>
+    </div>
+
+    <div class="subselect" id="subselect" style="display:none">
+      <select id="browseValue"><option>Loading…</option></select>
+      <button class="rand" id="browseRand" title="Random pool">🎲</button>
+    </div>
+
+    <div class="result" id="result"></div>
+  </div>
+
   <div class="toast" id="toast"></div>
 
   <footer>
@@ -296,13 +343,17 @@
 
   async function reveal() {
     if (!inputValid()) {
+      setTabVisual("you");
       resultEl.className = "result show";
       resultEl.innerHTML = '<div class="msg">Please fill in the field(s) above first.</div>';
       return;
     }
-    const raw = buildInput();
-    const hash = hashString(raw);
+    const hash = hashString(buildInput());
     const dexId = (hash % DEX_MAX) + 1;
+    youResult = { id: dexId, hash };
+    // input may have changed — let browse tabs recompute (keep their dropdown choice)
+    ["generation", "region", "game"].forEach(k => delete lastResult[k]);
+    setTabVisual("you");
     await showPokemon(dexId, hash);
   }
 
@@ -423,18 +474,170 @@
     if (inputValid()) reveal();
   }
 
-  // Random Pokémon (not from a hash)
-  function randomPokemon() {
-    const id = Math.floor(Math.random() * DEX_MAX) + 1;
-    showPokemon(id, hashString("random:" + id));
+  /* ---------- Explore by generation / region / game ---------- */
+
+  const ROMAN = ["I","II","III","IV","V","VI","VII","VIII","IX","X"];
+  let browseType = "generation";
+  let youResult = null;                    // last "Your Match" reveal { id, hash }
+  const browseValueMemory = {};            // browseType -> last selected pool value
+  const lastResult = {};                   // browseType -> last shown { id, hash }
+  const listCache = {};   // type -> [{value, label}]
+  const poolCache = {};   // "type:value" -> [ids]
+
+  const speciesId = url => {
+    const m = url.match(/pokemon-species\/(\d+)/);
+    return m ? parseInt(m[1], 10) : null;
+  };
+  const titleCase = s => s.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+
+  async function getJson(url) {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return r.json();
   }
 
+  // Options for the second dropdown, per type
+  async function loadOptions(type) {
+    if (listCache[type]) return listCache[type];
+    let opts;
+    if (type === "generation") {
+      const d = await getJson("https://pokeapi.co/api/v2/generation?limit=100");
+      opts = d.results.map((g, i) => ({ value: g.name, label: "Generation " + (ROMAN[i] || (i + 1)) }));
+    } else if (type === "region") {
+      const d = await getJson("https://pokeapi.co/api/v2/region?limit=100");
+      opts = d.results
+        .filter(r => r.name !== "orre")
+        .map(r => ({ value: r.name, label: titleCase(r.name) }));
+    } else { // game
+      const d = await getJson("https://pokeapi.co/api/v2/version-group?limit=100");
+      opts = d.results.map(v => ({ value: v.name, label: titleCase(v.name) }));
+    }
+    listCache[type] = opts;
+    return opts;
+  }
+
+  // Build a pool of species ids (1..1025) for a given type + value
+  async function getPool(type, value) {
+    const key = type + ":" + value;
+    if (poolCache[key]) return poolCache[key];
+    const ids = new Set();
+
+    const addFromGeneration = async (genRef) => {
+      const g = await getJson(genRef);
+      g.pokemon_species.forEach(s => { const id = speciesId(s.url); if (id) ids.add(id); });
+    };
+    const addFromPokedexes = async (pokedexes) => {
+      for (const pd of pokedexes) {
+        try {
+          const d = await getJson(pd.url);
+          d.pokemon_entries.forEach(e => { const id = speciesId(e.pokemon_species.url); if (id) ids.add(id); });
+        } catch (_) { /* skip a bad pokedex */ }
+      }
+    };
+
+    if (type === "generation") {
+      await addFromGeneration("https://pokeapi.co/api/v2/generation/" + value);
+    } else if (type === "region") {
+      const reg = await getJson("https://pokeapi.co/api/v2/region/" + value);
+      if (reg.main_generation) await addFromGeneration(reg.main_generation.url);
+      if (!ids.size && reg.pokedexes) await addFromPokedexes(reg.pokedexes);
+    } else { // game -> use the game's pokédex roster, fall back to its generation
+      const vg = await getJson("https://pokeapi.co/api/v2/version-group/" + value);
+      if (vg.pokedexes && vg.pokedexes.length) await addFromPokedexes(vg.pokedexes);
+      if (!ids.size && vg.generation) await addFromGeneration(vg.generation.url);
+    }
+
+    const pool = [...ids].filter(id => id >= 1 && id <= DEX_MAX).sort((a, b) => a - b);
+    poolCache[key] = pool;
+    return pool;
+  }
+
+  async function populateBrowseValues() {
+    const sel = document.getElementById("browseValue");
+    sel.innerHTML = "<option>Loading…</option>";
+    try {
+      const opts = await loadOptions(browseType);
+      sel.innerHTML = opts.map(o => '<option value="' + o.value + '">' + o.label + '</option>').join("");
+      if (browseValueMemory[browseType]) sel.value = browseValueMemory[browseType];
+    } catch (e) {
+      sel.innerHTML = '<option value="">Couldn\'t load list</option>';
+    }
+  }
+
+  // Active result tab: "you" | "generation" | "region" | "game"
+  let activeTab = "you";
+
+  // Update tab highlight + show the pool picker only on browse tabs (no reveal)
+  function setTabVisual(t) {
+    activeTab = t;
+    document.querySelectorAll("#tabs button").forEach(b => b.classList.toggle("active", b.dataset.tab === t));
+    document.getElementById("subselect").style.display = (t === "you") ? "none" : "flex";
+  }
+
+  // Clicking a tab: "By You" restores your reveal; browse tabs load a pool
+  async function setTab(t) {
+    setTabVisual(t);
+    if (t === "you") {
+      if (youResult) await showPokemon(youResult.id, youResult.hash);
+      else {
+        resultEl.className = "result show";
+        resultEl.innerHTML = '<div class="msg">Enter your name or birthday above and hit Reveal.</div>';
+      }
+    } else {
+      browseType = t;
+      await populateBrowseValues();      // restores the remembered dropdown value
+      if (lastResult[t]) await showPokemon(lastResult[t].id, lastResult[t].hash);
+      else await revealFromPool(true);
+    }
+  }
+
+  async function revealFromPool(useHash) {
+    const value = document.getElementById("browseValue").value;
+    if (!value) { toast("Pick an option first"); return; }
+    browseValueMemory[browseType] = value;    // remember this tab's selection
+    resultEl.className = "result show";
+    resultEl.innerHTML = '<div class="msg">Building the pool…</div>';
+    try {
+      const pool = await getPool(browseType, value);
+      if (!pool.length) { resultEl.innerHTML = '<div class="msg">No Pokémon found for that pool.</div>'; return; }
+      let idx, hash;
+      if (useHash && inputValid()) {
+        hash = hashString(buildInput());
+        idx = hash % pool.length;             // your destined pick, constrained to this pool
+      } else {
+        idx = Math.floor(Math.random() * pool.length);
+        hash = hashString("pool:" + browseType + ":" + value + ":" + idx);
+      }
+      lastResult[browseType] = { id: pool[idx], hash };
+      await showPokemon(pool[idx], hash);
+    } catch (e) {
+      resultEl.innerHTML = '<div class="msg">Could not build that pool (' + e.message + ').</div>';
+    }
+  }
+
+  document.getElementById("tabs").addEventListener("click", e => {
+    const btn = e.target.closest("button");
+    if (btn) setTab(btn.dataset.tab);
+  });
+  // Roll a random option in the pool picker, then reveal from it
+  function randomizeSubselection() {
+    const sel = document.getElementById("browseValue");
+    const opts = [...sel.options].filter(o => o.value);
+    if (!opts.length) return;
+    sel.value = opts[Math.floor(Math.random() * opts.length)].value;
+    revealFromPool(true);
+  }
+
+  document.getElementById("browseValue").addEventListener("change", () => revealFromPool(true));
+  document.getElementById("browseRand").addEventListener("click", randomizeSubselection);
+
   document.getElementById("go").addEventListener("click", reveal);
-  document.getElementById("rand").addEventListener("click", randomPokemon);
   document.querySelectorAll("input[type=text], input[type=date]").forEach(inp => {
     inp.addEventListener("keydown", e => { if (e.key === "Enter") reveal(); });
   });
 
+  // Initial placeholder in the result card
+  setTab("you");
   loadFromUrl();
 </script>
 </body>
